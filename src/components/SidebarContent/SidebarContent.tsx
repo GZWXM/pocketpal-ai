@@ -545,6 +545,13 @@ export const SidebarContent: React.FC<DrawerContentComponentProps> = observer(
               testID="drawer-item-chat"
             />
             <Drawer.Item
+              label="Hermes（远程）"
+              icon={() => <ChatIcon stroke={theme.colors.primary} />}
+              onPress={() => props.navigation.navigate(ROUTES.HERMES)}
+              style={styles.menuDrawerItem}
+              testID="drawer-item-hermes"
+            />
+            <Drawer.Item
               label={l10n.components.sidebarContent.menuItems.pals}
               icon={() => <PalIcon stroke={theme.colors.primary} />}
               onPress={() => props.navigation.navigate(ROUTES.PALS)}

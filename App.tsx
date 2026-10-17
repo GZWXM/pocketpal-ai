@@ -41,6 +41,7 @@ import {
 } from './src/__automation__';
 import {
   ChatScreen,
+  HermesChatScreen,
   ModelsScreen,
   SettingsScreen,
   BenchmarkScreen,
@@ -144,6 +145,13 @@ const App = observer(() => {
                           <Drawer.Screen
                             name={ROUTES.CHAT}
                             component={gestureHandlerRootHOC(ChatScreen)}
+                            options={{
+                              headerShown: false,
+                            }}
+                          />
+                          <Drawer.Screen
+                            name={ROUTES.HERMES}
+                            component={gestureHandlerRootHOC(HermesChatScreen)}
                             options={{
                               headerShown: false,
                             }}

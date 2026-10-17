@@ -19,10 +19,7 @@ import {Snackbar} from 'react-native-paper';
 import {useIsFocused} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import {
-  KeyboardStickyView,
-  useReanimatedKeyboardAnimation,
-} from 'react-native-keyboard-controller';
+import {KeyboardStickyView} from 'react-native-keyboard-controller';
 import Reanimated, {
   useAnimatedStyle,
   useSharedValue,
@@ -43,6 +40,7 @@ import {
 import ImageView from './ImageView';
 import {BannerRow} from './BannerRow';
 import {RouterLoadStatus, boundRouterLoad} from '../RouterLoadStatus';
+import {ChatScaffold} from '../ChatScaffold';
 import {createStyles} from './styles';
 
 import {IncreaseContextSheet} from '../IncreaseContextSheet';
@@ -193,8 +191,8 @@ export interface ChatProps extends Omit<ChatTopLevelProps, 'onSendPress'> {
  * count + label updates only re-render this small subtree (and not
  * the entire FlatList header), keeping the dot animations alive and
  * the elapsed-seconds timer ticking. Without this isolation, MobX
- * re-renders ChatView on each token, the `renderListHeaderComponent`
- * useCallback would change reference (because it'd carry the count in
+ * re-renders ChatView on each token, the list-header factory exposed by
+ * `ChatScaffold` would change reference (because it'd carry the count in
  * its deps), and FlatList would unmount + remount the header every
  * ~50ms — killing both Animated.loop and setInterval.
  */
@@ -427,40 +425,10 @@ export const ChatView = observer(
       }
     }, [activePal]);
 
-    // ============ KEYBOARD ANIMATION SETUP ============
-    // Get real-time keyboard height from the keyboard controller
-    const keyboard = useReanimatedKeyboardAnimation();
-
-    // One reconciled "keyboard occlusion above the input" value. The library
-    // reports a negative `keyboard.height` while the keyboard is up; the IME
-    // inset already spans the navigation bar (KeyboardProvider is configured
-    // navigationBarTranslucent), so the space the keyboard actually steals from
-    // the chat surface is the IME inset minus the safe-area bottom inset. One
-    // expression, correct on every API level — there is no version fork (the
-    // API ≤ 29 under-reservation is handled by the clamp, not a branch). The
-    // input translate, the suggested-prompts overlay, and the inverted-list
-    // bottom spacer all derive from THIS value so they never disagree.
-    const keyboardOcclusion = useDerivedValue(() =>
-      Math.max(0, Math.abs(keyboard.height.value) - insets.bottom),
-    );
-
-    // Shared value to track if keyboard is visible (height > 0)
-    const isKeyboardVisible = useSharedValue(false);
-
-    // Animated style for input container padding
-    // Apply bottom padding (safe area inset) only when keyboard is NOT visible
-    const inputContainerAnimatedStyle = useAnimatedStyle(() => ({
-      transform: [{translateY: -keyboardOcclusion.value}],
-      paddingBottom: isKeyboardVisible.value ? 0 : insets.bottom,
-    }));
-
-    // Suggested-prompts overlay shares the input's keyboard translation but
-    // must NOT inherit paddingBottom (which the input uses to clear the
-    // home indicator). Applying it here would create a large empty gap
-    // between the chips and the input when the keyboard is closed.
-    const suggestedPromptsAnimatedStyle = useAnimatedStyle(() => ({
-      transform: [{translateY: -keyboardOcclusion.value}],
-    }));
+    // ============ KEYBOARD ANIMATION & LAYOUT ============
+    // Keyboard avoidance, the sticky input bar and the inverted-list header are
+    // owned by `ChatScaffold`, which hands back the shared occlusion value and
+    // the derived translate style so overlays rendered here stay in sync.
 
     // ============ SCROLL TRACKING & SCROLL-TO-BOTTOM ============
     // Shared values for tracking scroll position and content overflow
@@ -994,34 +962,15 @@ export const ChatView = observer(
       ],
     );
 
-    // ListHeaderComponent as animated spacer (inverted list: header is at bottom)
-    // We use this to create a spacer at the bottom of the list to account for the
-    // keyboard height, so the newest turn rises above the input when the keyboard
-    // opens. Reads the SAME reconciled occlusion value as the input translate, so
-    // the two can never disagree, and holds while the keyboard is settled-open
-    // (it returns to 0 only when the keyboard closes, not while it merely stops
-    // moving — the previous in-flight gate dropped it too early on API ≤ 29).
-    const headerStyle = useAnimatedStyle(() => ({
-      height: keyboardOcclusion.value,
-    }));
-
-    // Render header (pending indicator + keyboard spacer). The
-    // FlatList is `inverted={true}`, so the ListHeaderComponent renders
-    // at the bottom of the visible list — i.e. BELOW the latest turn,
-    // never inside it.
-    const renderListHeaderComponent = React.useCallback(
-      () => (
-        <>
-          {isPending && <PendingIndicatorView />}
-          {chatMessages.length > 0 && <Reanimated.View style={headerStyle} />}
-        </>
-      ),
-      [isPending, chatMessages.length, headerStyle],
-    );
+    // The pending indicator + keyboard spacer live in `ChatScaffold`'s
+    // `renderListHeader` (the FlatList is `inverted`, so the header renders at
+    // the bottom of the visible list — i.e. BELOW the latest turn, never inside
+    // it). `ChatScaffold` also owns the spacer's height, animated from the same
+    // reconciled keyboard occlusion as the input bar.
 
     // Render complete chat list with scroll-to-bottom button
     const renderChatList = React.useCallback(
-      () => (
+      (renderListHeader: () => React.ReactElement) => (
         <>
           <Reanimated.View
             // eslint-disable-next-line react-native/no-inline-styles
@@ -1039,7 +988,7 @@ export const ChatView = observer(
               initialNumToRender={10}
               ListEmptyComponent={renderListEmptyComponent}
               ListFooterComponent={renderListFooterComponent}
-              ListHeaderComponent={renderListHeaderComponent}
+              ListHeaderComponent={renderListHeader}
               maxToRenderPerBatch={6}
               onEndReachedThreshold={0.75}
               style={[styles.flatList, {marginBottom: bottomComponentHeight}]}
@@ -1105,7 +1054,6 @@ export const ChatView = observer(
         chatMessages,
         renderListEmptyComponent,
         renderListFooterComponent,
-        renderListHeaderComponent,
         bottomComponentHeight,
         handleScroll,
         flatListProps,
@@ -1163,27 +1111,19 @@ export const ChatView = observer(
     // ============ COMPONENT RENDER ============
     return (
       <UserContext.Provider value={user}>
-        <View
-          style={[styles.container, {backgroundColor: inputBackgroundColor}]}
-          onLayout={onLayout}>
-          {/* Header */}
-          <View style={styles.headerWrapper}>
-            <ChatHeader />
-          </View>
-
-          {/* Main chat container */}
-          <Reanimated.View style={styles.chatContainer}>
-            {customContent}
-            {renderChatList()}
-
-            {/* Chat input */}
-            <Reanimated.View
-              onLayout={onLayoutChatInput}
-              style={[
-                styles.inputContainer,
-                inputContainerAnimatedStyle,
-                {backgroundColor: inputBackgroundColor},
-              ]}>
+        <ChatScaffold
+          backgroundColor={inputBackgroundColor}
+          onLayout={onLayout}
+          header={<ChatHeader />}
+          // The FlatList is inverted, so the pending indicator belongs at the
+          // bottom of the visible list (below the latest turn). Gating stays
+          // here; the container/position is owned by ChatScaffold.
+          pendingIndicator={isPending ? <PendingIndicatorView /> : null}
+          showListHeaderSpacer={chatMessages.length > 0}
+          list={({renderListHeader}) => renderChatList(renderListHeader)}
+          onInputLayout={onLayoutChatInput}
+          input={
+            <>
               <BannerRow
                 messages={messages}
                 htmlPreviewCount={htmlPreviewCount}
@@ -1218,128 +1158,137 @@ export const ChatView = observer(
                   },
                 }}
               />
-            </Reanimated.View>
-
-            {/* Suggested prompts — float above the input container, share
+            </>
+          }
+          inputOverlay={({keyboardTranslateStyle}) => (
+            <>
+              {/* Suggested prompts — float above the input container, share
                 its keyboard-tracking transform so they rise together but
                 render as a sibling (no shared background / rounded top). */}
-            {messages.length === 0 &&
-            !isStreaming &&
-            modelStore.activeModelId !== undefined &&
-            activePal?.greeting?.suggestedPrompts &&
-            activePal.greeting.suggestedPrompts.length > 0 ? (
-              <Reanimated.View
-                pointerEvents="box-none"
-                style={[
-                  styles.suggestedPromptsOverlay,
-                  suggestedPromptsAnimatedStyle,
-                  {bottom: chatInputHeight.height},
-                ]}>
-                <SuggestedPromptsRow
-                  prompts={activePal.greeting.suggestedPrompts}
-                  onSelect={prompt =>
-                    wrappedOnSendPress({type: 'text', text: prompt})
+              {messages.length === 0 &&
+              !isStreaming &&
+              modelStore.activeModelId !== undefined &&
+              activePal?.greeting?.suggestedPrompts &&
+              activePal.greeting.suggestedPrompts.length > 0 ? (
+                <Reanimated.View
+                  pointerEvents="box-none"
+                  style={[
+                    styles.suggestedPromptsOverlay,
+                    keyboardTranslateStyle,
+                    {bottom: chatInputHeight.height},
+                  ]}>
+                  <SuggestedPromptsRow
+                    prompts={activePal.greeting.suggestedPrompts}
+                    onSelect={prompt =>
+                      wrappedOnSendPress({type: 'text', text: prompt})
+                    }
+                  />
+                </Reanimated.View>
+              ) : null}
+
+              {/* Pal/Model picker sheet */}
+              {/* Conditionally render the sheet to avoid keyboard issues.
+            It makes the disappearing sudden, but it's better than the keyboard issue.*/}
+              {isPickerVisible && (
+                <ChatPalModelPickerSheet
+                  isVisible={isPickerVisible}
+                  onClose={() => setIsPickerVisible(false)}
+                  onModelSelect={handleModelSelect}
+                  onPalSelect={handlePalSelect}
+                  onPalSettingsSelect={onPalSettingsSelect}
+                  chatInputHeight={chatInputHeight.height}
+                />
+              )}
+            </>
+          )}
+          overlays={
+            <>
+              {/* Image viewer */}
+              <ImageView
+                imageIndex={imageViewIndex}
+                images={gallery}
+                onRequestClose={handleRequestClose}
+                visible={isImageViewVisible}
+              />
+
+              {/* Context menu */}
+              <Menu
+                visible={menuVisible}
+                onDismiss={handleMenuDismiss}
+                selectable={false}
+                anchor={menuPosition}>
+                {menuItems.map(renderMenuItem)}
+              </Menu>
+
+              {/* Content report sheet */}
+              <ContentReportSheet
+                isVisible={isReportSheetVisible}
+                onClose={() => setIsReportSheetVisible(false)}
+              />
+
+              {increaseSheetOpen && activeModel && currentNCtx !== undefined ? (
+                <IncreaseContextSheet
+                  isVisible={increaseSheetOpen}
+                  model={activeModel}
+                  projectionModel={projectionModel}
+                  currentNCtx={currentNCtx}
+                  onClose={() => setIncreaseSheetOpen(false)}
+                  onNewChat={() => {
+                    chatSessionStore.resetActiveSession();
+                    setIncreaseSheetOpen(false);
+                  }}
+                  onReloadStart={() => {
+                    // Single advisory surface: dismiss the pal-load hint in the
+                    // same handler so no frame shows two snackbars at once.
+                    palLoadHint.dismiss();
+                    setReloadSnackbar({
+                      message: l10n.chat.increaseContextReloading,
+                      indefinite: true,
+                    });
+                  }}
+                  onReloadResult={(success, target) =>
+                    setReloadSnackbar({
+                      message: success
+                        ? t(l10n.chat.increaseContextSuccess, {target})
+                        : l10n.chat.increaseContextFailure,
+                      indefinite: false,
+                    })
                   }
                 />
-              </Reanimated.View>
-            ) : null}
+              ) : null}
 
-            {/* Pal/Model picker sheet */}
-            {/* Conditionally render the sheet to avoid keyboard issues.
-            It makes the disappearing sudden, but it's better than the keyboard issue.*/}
-            {isPickerVisible && (
-              <ChatPalModelPickerSheet
-                isVisible={isPickerVisible}
-                onClose={() => setIsPickerVisible(false)}
-                onModelSelect={handleModelSelect}
-                onPalSelect={handlePalSelect}
-                onPalSettingsSelect={onPalSettingsSelect}
-                chatInputHeight={chatInputHeight.height}
-              />
-            )}
-          </Reanimated.View>
+              <Snackbar
+                visible={isFocused && reloadSnackbar !== null}
+                onDismiss={() => setReloadSnackbar(null)}
+                duration={
+                  // RNP treats POSITIVE_INFINITY as "no auto-hide timer"; the
+                  // reloading snackbar stays until the result replaces it.
+                  reloadSnackbar?.indefinite ? Number.POSITIVE_INFINITY : 4000
+                }
+                testID="context-reload-snackbar">
+                {reloadSnackbar?.message ?? ''}
+              </Snackbar>
 
-          {/* Image viewer */}
-          <ImageView
-            imageIndex={imageViewIndex}
-            images={gallery}
-            onRequestClose={handleRequestClose}
-            visible={isImageViewVisible}
-          />
-
-          {/* Context menu */}
-          <Menu
-            visible={menuVisible}
-            onDismiss={handleMenuDismiss}
-            selectable={false}
-            anchor={menuPosition}>
-            {menuItems.map(renderMenuItem)}
-          </Menu>
-
-          {/* Content report sheet */}
-          <ContentReportSheet
-            isVisible={isReportSheetVisible}
-            onClose={() => setIsReportSheetVisible(false)}
-          />
-
-          {increaseSheetOpen && activeModel && currentNCtx !== undefined ? (
-            <IncreaseContextSheet
-              isVisible={increaseSheetOpen}
-              model={activeModel}
-              projectionModel={projectionModel}
-              currentNCtx={currentNCtx}
-              onClose={() => setIncreaseSheetOpen(false)}
-              onNewChat={() => {
-                chatSessionStore.resetActiveSession();
-                setIncreaseSheetOpen(false);
-              }}
-              onReloadStart={() => {
-                // Single advisory surface: dismiss the pal-load hint in the
-                // same handler so no frame shows two snackbars at once.
-                palLoadHint.dismiss();
-                setReloadSnackbar({
-                  message: l10n.chat.increaseContextReloading,
-                  indefinite: true,
-                });
-              }}
-              onReloadResult={(success, target) =>
-                setReloadSnackbar({
-                  message: success
-                    ? t(l10n.chat.increaseContextSuccess, {target})
-                    : l10n.chat.increaseContextFailure,
-                  indefinite: false,
-                })
-              }
-            />
-          ) : null}
-
-          <Snackbar
-            visible={isFocused && reloadSnackbar !== null}
-            onDismiss={() => setReloadSnackbar(null)}
-            duration={
-              // RNP treats POSITIVE_INFINITY as "no auto-hide timer"; the
-              // reloading snackbar stays until the result replaces it.
-              reloadSnackbar?.indefinite ? Number.POSITIVE_INFINITY : 4000
-            }
-            testID="context-reload-snackbar">
-            {reloadSnackbar?.message ?? ''}
-          </Snackbar>
-
-          <Snackbar
-            visible={isFocused && palLoadHint.hintVisible && !reloadSnackbar}
-            onDismiss={palLoadHint.dismiss}
-            duration={6000}
-            action={{
-              label: l10n.chat.contextMoreRoom,
-              onPress: () => {
-                palLoadHint.dismiss();
-                setIncreaseSheetOpen(true);
-              },
-            }}
-            testID="pal-load-hint-snackbar">
-            {l10n.chat.palLoadHint}
-          </Snackbar>
-        </View>
+              <Snackbar
+                visible={
+                  isFocused && palLoadHint.hintVisible && !reloadSnackbar
+                }
+                onDismiss={palLoadHint.dismiss}
+                duration={6000}
+                action={{
+                  label: l10n.chat.contextMoreRoom,
+                  onPress: () => {
+                    palLoadHint.dismiss();
+                    setIncreaseSheetOpen(true);
+                  },
+                }}
+                testID="pal-load-hint-snackbar">
+                {l10n.chat.palLoadHint}
+              </Snackbar>
+            </>
+          }>
+          {customContent}
+        </ChatScaffold>
       </UserContext.Provider>
     );
   },

@@ -105,6 +105,12 @@ export interface ChatInputAdditionalProps {
   reasoningEffort?: string;
   /** Callback to cycle the graded effort state (off -> values -> off) */
   onEffortCycle?: () => void;
+  /**
+   * Override the "a model is ready" gate. Defaults to the local model store's
+   * `activeModelId`; remote surfaces (no local model involved) pass `true` so
+   * the send button and the model warning stop keying off local engine state.
+   */
+  modelReady?: boolean;
 }
 
 export type ChatInputProps = ChatInputTopLevelProps & ChatInputAdditionalProps;
@@ -143,6 +149,7 @@ export const ChatInput = observer(
     effortValues = [],
     reasoningEffort,
     onEffortCycle,
+    modelReady,
   }: ChatInputProps) => {
     const l10n = React.useContext(L10nContext);
     const theme = useTheme();
@@ -156,7 +163,7 @@ export const ChatInput = observer(
     // Camera permission hook from react-native-vision-camera
     const {hasPermission, requestPermission} = useCameraPermission();
 
-    const hasActiveModel = !!modelStore.activeModelId;
+    const hasActiveModel = modelReady ?? !!modelStore.activeModelId;
 
     // Use `defaultValue` if provided
     const [text, setText] = React.useState(textInputProps?.defaultValue ?? '');
