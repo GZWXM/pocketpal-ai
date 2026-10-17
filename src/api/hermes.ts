@@ -41,7 +41,12 @@ export type HermesTransport = 'auto' | 'fetch' | 'xhr';
  * string matching.
  */
 export type HermesErrorKind =
-  'network' | 'auth' | 'server' | 'timeout' | 'aborted' | 'protocol';
+  | 'network'
+  | 'auth'
+  | 'server'
+  | 'timeout'
+  | 'aborted'
+  | 'protocol';
 
 /** Typed transport/protocol failure. `serverMessage` is the server's own words. */
 export class HermesStreamError extends Error {
