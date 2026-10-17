@@ -1,6 +1,6 @@
 import React, {useEffect, useState} from 'react';
 import {View} from 'react-native';
-import {Button, HelperText} from 'react-native-paper';
+import {Button, HelperText, Text} from 'react-native-paper';
 import {observer} from 'mobx-react';
 
 import {Sheet, TextInput} from '../../components';
@@ -73,12 +73,14 @@ export const HermesSettingsSheet: React.FC<{
   return (
     <Sheet
       isVisible={isVisible}
-      onDismiss={onDismiss}
+      onClose={onDismiss}
       title="Hermes 远程"
-      subtitle="连接到 api_server（/v1/chat/completions）"
       snapPoints={['60%', '90%']}>
       <Sheet.ScrollView>
         <View style={{paddingHorizontal: 2, paddingBottom: 16}}>
+          <Text variant="bodySmall" style={{marginBottom: 12}}>
+            连接到 api_server（/v1/chat/completions）
+          </Text>
           <TextInput
             label="服务器地址"
             value={serverUrl}
