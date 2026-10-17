@@ -20,6 +20,7 @@ import {useTheme} from '../../hooks';
 
 import {styles} from './styles';
 import {MarkdownView} from '../MarkdownView';
+import {CollapsibleContent} from '../CollapsibleContent';
 
 import {AgentStep, MessageType} from '../../utils/types';
 import {
@@ -60,6 +61,16 @@ export interface TextMessageProps extends TextMessageTopLevelProps {
    * Reasoning is rendered separately via ReasoningBlock.
    */
   step?: AgentStep;
+  /**
+   * Opt-in long-content folding. When omitted (the default) the message
+   * renders exactly as before. When provided, the markdown body is
+   * clamped to `maxLines` lines behind a bottom fade + "Show more"
+   * toggle. It also disables the link-preview path so legacy messages
+   * containing URLs fold too.
+   */
+  collapse?: {
+    maxLines: number;
+  };
 }
 
 export const TextMessage = ({
@@ -70,6 +81,7 @@ export const TextMessage = ({
   showName,
   usePreviewData,
   step,
+  collapse,
 }: TextMessageProps) => {
   // For AssistantTurn rendering, `visibleStepContent(step)` is the
   // authoritative source. For legacy `Text` messages, fall back to
@@ -231,9 +243,11 @@ export const TextMessage = ({
 
   // Link preview only meaningful for legacy Text messages (image-bearing
   // user messages, multimodal). AssistantTurn rendering uses the inline
-  // markdown path below.
+  // markdown path below. Folded messages always take the markdown path,
+  // otherwise the link preview would bypass the clamp.
   const linkPreviewEligible =
     !step &&
+    !collapse &&
     usePreviewData &&
     !!onPreviewDataFetched &&
     visibleText.length > 0 &&
@@ -274,11 +288,30 @@ export const TextMessage = ({
           {/* Render images above the text — legacy Text path only. */}
           {!step && renderImages()}
 
-          <MarkdownView
-            markdownText={visibleText.trim()}
-            maxMessageWidth={messageWidth}
-            selectable={false}
-          />
+          {collapse ? (
+            // Fade blends into the bubble surface so the cut line reads
+            // as continuous text rather than a hard edge.
+            <CollapsibleContent
+              maxLines={collapse.maxLines}
+              fadeColor={
+                user?.id === message.author.id
+                  ? theme.colors.primary
+                  : theme.colors.secondary
+              }
+              testID="text-message-collapsible">
+              <MarkdownView
+                markdownText={visibleText.trim()}
+                maxMessageWidth={messageWidth}
+                selectable={false}
+              />
+            </CollapsibleContent>
+          ) : (
+            <MarkdownView
+              markdownText={visibleText.trim()}
+              maxMessageWidth={messageWidth}
+              selectable={false}
+            />
+          )}
         </View>
       )}
 
