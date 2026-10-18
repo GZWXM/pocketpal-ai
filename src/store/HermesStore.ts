@@ -88,6 +88,31 @@ function turnText(turn: HermesAssistantTurn): string {
     .join('\n\n');
 }
 
+/** A row this app rendered before the server confirmed it. */
+interface OptimisticRow {
+  role: 'user' | 'assistant';
+  text: string;
+  createdAt: number;
+}
+
+/**
+ * Identity used to match a local row against the server's copy of it. The
+ * server assigns its own `message_id`, so ids cannot be compared; content is
+ * the only common key. Whitespace is collapsed so a reflowed answer still
+ * matches.
+ */
+function rowKey(role: 'user' | 'assistant', text: string): string {
+  return `${role}\u0000${text.replace(/\s+/g, ' ').trim()}`;
+}
+
+/** A failure that means "this session id is gone, resolve again". */
+function isStaleSession(error: unknown): boolean {
+  return (
+    error instanceof HermesStreamError &&
+    (error.status === 404 || error.status === 409 || error.status === 410)
+  );
+}
+
 export class HermesStore {
   /** Base URL of the remote Hermes api_server. */
   serverUrl = '';
@@ -101,6 +126,12 @@ export class HermesStore {
    * conversation back after a restart.
    */
   sessionId: string = `pocketpal-${uuidv4()}`;
+  /**
+   * Device address used for the server's `/api/devices/*` endpoints. The
+   * server binds this id to the QQ DM session (`_DEVICE_ROUTE_BINDINGS`), so
+   * the app reads and writes the very same transcript the QQ bot uses.
+   */
+  deviceId = 'watch-magic7';
   status: HermesStatus = 'idle';
   /** Human-readable last failure, cleared on the next send. */
   error: string | null = null;
@@ -114,11 +145,31 @@ export class HermesStore {
   private abortController: AbortController | null = null;
   /** Counts runs so a late result from an abandoned stream writes nothing. */
   private runSeq = 0;
+  /** Session id the device binding resolved to; `null` until first success. */
+  private resolvedSessionId: string | null = null;
+  /** In-flight `/session` lookup, shared by concurrent callers. */
+  private sessionResolveInFlight: Promise<string | null> | null = null;
+  /**
+   * Rows this app added locally that the server has not echoed back yet.
+   * `loadHistory()` consumes them: an entry found in the server transcript is
+   * acknowledged and dropped, so the same message never renders twice.
+   */
+  private optimistic: OptimisticRow[] = [];
 
   constructor() {
-    makeAutoObservable<HermesStore, 'abortController' | 'runSeq'>(this, {
+    makeAutoObservable<
+      HermesStore,
+      | 'abortController'
+      | 'runSeq'
+      | 'resolvedSessionId'
+      | 'sessionResolveInFlight'
+      | 'optimistic'
+    >(this, {
       abortController: false,
       runSeq: false,
+      resolvedSessionId: false,
+      sessionResolveInFlight: false,
+      optimistic: false,
     });
 
     // The API key never lands in AsyncStorage; only URL, model and history.
@@ -268,7 +319,21 @@ export class HermesStore {
       type: 'text',
       text,
     });
+    this.rememberOptimistic('user', text);
     await this.runNewTurn();
+  }
+
+  /** Track a locally rendered row until `loadHistory()` sees the server's copy. */
+  private rememberOptimistic(role: 'user' | 'assistant', text: string): void {
+    if (!text.trim()) {
+      return;
+    }
+    this.optimistic.push({role, text, createdAt: Date.now()});
+    // Only the newest handful can still be unconfirmed; older ones matter
+    // solely if a reload happens right after a burst of sends.
+    if (this.optimistic.length > 20) {
+      this.optimistic.splice(0, this.optimistic.length - 20);
+    }
   }
 
   /**
@@ -309,10 +374,16 @@ export class HermesStore {
   }
 
   /**
-   * Pull the server-side transcript for this session and rebuild the local
-   * rows. The server is the source of truth (it also holds turns sent from
-   * other channels), so the local list is replaced rather than merged —
-   * otherwise a failed send leaves a ghost row that never existed remotely.
+   * Pull the server-side transcript for this device and rebuild the local
+   * rows. `GET /api/devices/{id}/timeline` is the merged chain: the bound
+   * session (QQ DM) plus cron pushes, ascending by time, with each entry
+   * carrying `ts` in float seconds, `role`, `kind` (`chat` / `tool`), `content`
+   * and `message_id`.
+   *
+   * The server is the source of truth, so the local list is replaced rather
+   * than merged — but rows this app pushed and the server has not echoed yet
+   * are carried over (see `optimistic`), which is what keeps a send → reload
+   * cycle from showing every message twice.
    */
   async loadHistory(limit = 200): Promise<void> {
     const base = this.serverUrl.trim();
@@ -325,9 +396,10 @@ export class HermesStore {
     } catch {
       apiKey = undefined;
     }
+    // Device timeline = the QQ session chain + cron pushes, merged by time.
     const url =
-      `${normalizeUrl(base)}/api/sessions/${encodeURIComponent(this.sessionId)}` +
-      `/messages?limit=${limit}&order=latest`;
+      `${normalizeUrl(base)}/api/devices/${encodeURIComponent(this.deviceId)}` +
+      `/timeline?limit=${limit}`;
     try {
       const res = await fetch(url, {
         headers: apiKey ? {Authorization: `Bearer ${apiKey}`} : undefined,
@@ -335,17 +407,36 @@ export class HermesStore {
       if (!res.ok) {
         return;
       }
-      const json = (await res.json()) as {data?: unknown};
-      const rows = Array.isArray(json?.data) ? json.data : [];
+      const json = (await res.json()) as {
+        entries?: unknown;
+        session_id?: unknown;
+      };
+      // The binding already tells us the session; remember it so the next
+      // send joins this transcript without another round trip.
+      if (typeof json?.session_id === 'string' && json.session_id) {
+        const id = json.session_id;
+        runInAction(() => {
+          this.resolvedSessionId = id;
+          this.sessionId = id;
+        });
+      }
+      const rows = Array.isArray(json?.entries) ? json.entries : [];
+      /** Seconds (float) → milliseconds; already-ms values pass through. */
       const toMs = (row: Record<string, unknown>): number => {
-        const v = row.timestamp ?? row.created_at;
+        const v = row.ts ?? row.timestamp ?? row.created_at;
         if (typeof v === 'number') {
           return v < 1e12 ? v * 1000 : v;
         }
         const parsed = typeof v === 'string' ? Date.parse(v) : NaN;
         return Number.isFinite(parsed) ? parsed : Date.now();
       };
+
       const next: HermesMessage[] = [];
+      // Tool rows are folded into the answer they belong to instead of
+      // becoming chat bubbles of their own: one answer can produce dozens.
+      // The server emits them on either side of that answer, so they buffer
+      // until the next assistant row claims them.
+      let pendingTools: HermesToolCall[] = [];
       for (const raw of rows) {
         const row = raw as Record<string, unknown>;
         const content =
@@ -353,32 +444,156 @@ export class HermesStore {
         if (!content) {
           continue;
         }
-        const id = typeof row.id === 'string' ? row.id : uuidv4();
+        const createdAt = toMs(row);
+        const mid = row.message_id;
+        const id =
+          typeof mid === 'number' || (typeof mid === 'string' && mid)
+            ? `srv-${mid}`
+            : `srv-${createdAt}-${next.length}`;
+
+        if (row.kind === 'tool' || row.role === 'tool') {
+          pendingTools.push({
+            id,
+            type: 'function',
+            function: {name: String(row.tool_name ?? 'tool'), arguments: ''},
+            progress: {status: 'done', label: content},
+          });
+          continue;
+        }
+
+        if (row.role === 'user') {
+          // A tool run that never produced visible text has no bubble to
+          // attach to; drop it rather than leak it below the next question.
+          pendingTools = [];
+          next.push({id, author: user, createdAt, type: 'text', text: content});
+          continue;
+        }
+        if (row.role === 'assistant') {
+          const turn: HermesAssistantTurn = {
+            id,
+            author: assistant,
+            createdAt,
+            type: 'assistant_turn',
+            steps: [
+              pendingTools.length
+                ? {content, toolCalls: pendingTools}
+                : {content},
+            ],
+          };
+          pendingTools = [];
+          next.push(turn);
+        }
+        // Anything else (system rows, unknown kinds) is not chattable.
+      }
+
+      // Acknowledge local rows the server now owns; keep the rest on screen.
+      const counts = new Map<string, number>();
+      for (const message of next) {
+        const key =
+          message.type === 'text'
+            ? rowKey('user', message.text)
+            : rowKey('assistant', turnText(message));
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      const pending: OptimisticRow[] = [];
+      for (const row of this.optimistic) {
+        const key = rowKey(row.role, row.text);
+        const seen = counts.get(key) ?? 0;
+        if (seen > 0) {
+          counts.set(key, seen - 1);
+          continue;
+        }
+        pending.push(row);
+      }
+      pending.forEach((row, index) => {
+        const id = `local-${row.createdAt}-${index}`;
         if (row.role === 'user') {
           next.push({
             id,
             author: user,
-            createdAt: toMs(row),
+            createdAt: row.createdAt,
             type: 'text',
-            text: content,
+            text: row.text,
           });
-        } else if (row.role === 'assistant') {
-          next.push({
-            id,
-            author: assistant,
-            createdAt: toMs(row),
-            type: 'assistant_turn',
-            steps: [{content}],
-          });
+          return;
         }
-      }
-      if (next.length) {
-        runInAction(() => {
-          this.messages = next;
+        next.push({
+          id,
+          author: assistant,
+          createdAt: row.createdAt,
+          type: 'assistant_turn',
+          steps: [{content: row.text}],
         });
-      }
+      });
+
+      runInAction(() => {
+        // A live stream owns the tail of the list; replacing it mid-flight
+        // would orphan the row being written into.
+        if (this.isBusy) {
+          return;
+        }
+        this.optimistic = pending;
+        this.messages = next;
+      });
     } catch {
       // Offline or server down: keep whatever is already on screen.
+    }
+  }
+
+  /**
+   * Resolve the session the device id is bound to (`/api/devices/{id}/session`).
+   * Cached: the binding only changes when the server rotates the transcript.
+   * Returns `null` when the lookup fails, leaving the caller on its last
+   * known id.
+   */
+  async resolveSessionId(force = false): Promise<string | null> {
+    if (!force && this.resolvedSessionId) {
+      return this.resolvedSessionId;
+    }
+    if (this.sessionResolveInFlight) {
+      return this.sessionResolveInFlight;
+    }
+    const base = this.serverUrl.trim();
+    if (!base) {
+      return null;
+    }
+    const task = (async (): Promise<string | null> => {
+      let apiKey: string | undefined;
+      try {
+        apiKey = await this.getApiKey();
+      } catch {
+        apiKey = undefined;
+      }
+      const url =
+        `${normalizeUrl(base)}/api/devices/${encodeURIComponent(this.deviceId)}` +
+        `/session`;
+      try {
+        const res = await fetch(url, {
+          headers: apiKey ? {Authorization: `Bearer ${apiKey}`} : undefined,
+        });
+        if (!res.ok) {
+          return null;
+        }
+        const json = (await res.json()) as {session_id?: unknown};
+        const id =
+          typeof json?.session_id === 'string' ? json.session_id.trim() : '';
+        if (!id) {
+          return null;
+        }
+        runInAction(() => {
+          this.resolvedSessionId = id;
+          this.sessionId = id;
+        });
+        return id;
+      } catch {
+        return null;
+      }
+    })();
+    this.sessionResolveInFlight = task;
+    try {
+      return await task;
+    } finally {
+      this.sessionResolveInFlight = null;
     }
   }
 
@@ -501,38 +716,65 @@ export class HermesStore {
       apiKey = undefined;
     }
 
+    // Join the transcript the device id is bound to (the QQ DM session), not
+    // a fresh private one: only that id makes the turn show up for the bot
+    // and in the timeline this screen loads. Falls back to the persisted id
+    // when the lookup fails, so a flaky /session never blocks a send.
+    const resolved = await this.resolveSessionId().catch(() => null);
+    let sessionId = resolved ?? this.sessionId;
+    const requestBody = {
+      serverUrl: this.serverUrl,
+      apiKey,
+      model: this.model,
+      messages: this.toWireMessages().filter(m => m.content.trim()),
+      signal: controller.signal,
+    };
+
+    const streamHandlers = {
+      onOpen: () => {
+        if (seq !== this.runSeq) {
+          return;
+        }
+        runInAction(() => {
+          this.status = 'streaming';
+          this.connection = 'ok';
+          this.lastConnectedAt = Date.now();
+        });
+      },
+      onContent: (delta: string) => {
+        pendingContent += delta;
+        scheduleFlush();
+      },
+      onReasoning: (delta: string) => {
+        pendingReasoning += delta;
+        scheduleFlush();
+      },
+      onToolProgress: applyToolProgress,
+    };
+
     try {
-      const result: HermesStreamResult = await streamHermesChat(
-        {
-          serverUrl: this.serverUrl,
-          apiKey,
-          model: this.model,
-          messages: this.toWireMessages().filter(m => m.content.trim()),
-          sessionId: this.sessionId,
-          signal: controller.signal,
-        },
-        {
-          onOpen: () => {
-            if (seq !== this.runSeq) {
-              return;
-            }
-            runInAction(() => {
-              this.status = 'streaming';
-              this.connection = 'ok';
-              this.lastConnectedAt = Date.now();
-            });
-          },
-          onContent: delta => {
-            pendingContent += delta;
-            scheduleFlush();
-          },
-          onReasoning: delta => {
-            pendingReasoning += delta;
-            scheduleFlush();
-          },
-          onToolProgress: applyToolProgress,
-        },
-      );
+      let result: HermesStreamResult;
+      try {
+        result = await streamHermesChat(
+          {...requestBody, sessionId},
+          streamHandlers,
+        );
+      } catch (error) {
+        // The server rotates transcripts (`/new`); a stale id comes back as
+        // 404/409. Re-resolve once and replay against the current session.
+        if (!isStaleSession(error) || controller.signal.aborted) {
+          throw error;
+        }
+        const fresh = await this.resolveSessionId(true).catch(() => null);
+        if (!fresh || fresh === sessionId) {
+          throw error;
+        }
+        sessionId = fresh;
+        result = await streamHermesChat(
+          {...requestBody, sessionId},
+          streamHandlers,
+        );
+      }
 
       flush();
       runInAction(() => {
@@ -555,6 +797,11 @@ export class HermesStore {
           this.errorKind = null;
         }
       });
+      // The server persists this answer; remember it so a reload that races
+      // ahead of the write does not render a second copy.
+      if (seq === this.runSeq && step.content) {
+        this.rememberOptimistic('assistant', step.content);
+      }
     } catch (error: any) {
       flush();
       runInAction(() => {
