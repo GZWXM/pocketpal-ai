@@ -66,11 +66,13 @@ export const HermesChatScreen: React.FC = observer(() => {
 
   // 进页面就把服务端的历史拉回来：本地只缓存上一次的会话，
   // 服务端才是事实源（压缩、换会话、别的渠道发的都在那边）。
+  // 依赖里必须带 serverUrl —— 只依赖 configured 的话，用户先填错地址
+  // 再改对，configured 一直是 true，effect 不会重跑，进去就是空列表。
   React.useEffect(() => {
     if (configured) {
       void hermesStore.loadHistory();
     }
-  }, [configured]);
+  }, [configured, hermesStore.serverUrl]);
 
   const {chatMessages} = calculateChatMessages(
     hermesStore.messages as MessageType.Any[],
@@ -166,6 +168,9 @@ export const HermesChatScreen: React.FC = observer(() => {
           onInputLayout={onInputLayout}
           list={({renderListHeader}) => (
             <FlatList
+              // 原版 ChatView 用的是 height:'100%'（不是 flex:1）。不给高度的话
+              // 列表会撑成内容高度，超出一屏的部分被裁掉，表现就是完全滑不动。
+              style={{height: '100%'}}
               data={streamMessages}
               inverted={chatMessages.length > 0}
               keyExtractor={item => item.id}
