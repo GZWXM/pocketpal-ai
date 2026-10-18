@@ -62,7 +62,8 @@ export const HermesChatScreen: React.FC = observer(() => {
   const {onLayout: onInputLayout, size: inputSize} = useComponentSize();
   const {onLayout: onRootLayout, size: rootSize} = useComponentSize();
 
-  const configured = !!hermesStore.serverUrl.trim();
+  const serverUrl = hermesStore.serverUrl;
+  const configured = !!serverUrl.trim();
 
   // 进页面就把服务端的历史拉回来：本地只缓存上一次的会话，
   // 服务端才是事实源（压缩、换会话、别的渠道发的都在那边）。
@@ -72,7 +73,7 @@ export const HermesChatScreen: React.FC = observer(() => {
     if (configured) {
       void hermesStore.loadHistory();
     }
-  }, [configured, hermesStore.serverUrl]);
+  }, [configured, serverUrl]);
 
   const {chatMessages} = calculateChatMessages(
     hermesStore.messages as MessageType.Any[],
@@ -168,9 +169,6 @@ export const HermesChatScreen: React.FC = observer(() => {
           onInputLayout={onInputLayout}
           list={({renderListHeader}) => (
             <FlatList
-              // 原版 ChatView 用的是 height:'100%'（不是 flex:1）。不给高度的话
-              // 列表会撑成内容高度，超出一屏的部分被裁掉，表现就是完全滑不动。
-              style={{height: '100%'}}
               data={streamMessages}
               inverted={chatMessages.length > 0}
               keyExtractor={item => item.id}
@@ -197,7 +195,9 @@ export const HermesChatScreen: React.FC = observer(() => {
                 flexGrow: 1,
                 justifyContent: chatMessages.length ? undefined : 'center',
               }}
-              style={{marginBottom: inputSize.height}}
+              // 原版 ChatView 用的是 height:'100%'（不是 flex:1）。不给高度的话
+              // 列表会撑成内容高度，超出一屏的部分被裁掉，表现就是完全滑不动。
+              style={{height: '100%', marginBottom: inputSize.height}}
               keyboardDismissMode={
                 Platform.OS === 'ios' ? 'interactive' : 'none'
               }
