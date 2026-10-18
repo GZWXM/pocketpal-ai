@@ -64,10 +64,25 @@ export const HermesChatScreen: React.FC = observer(() => {
 
   const configured = !!hermesStore.serverUrl.trim();
 
+  // 进页面就把服务端的历史拉回来：本地只缓存上一次的会话，
+  // 服务端才是事实源（压缩、换会话、别的渠道发的都在那边）。
+  React.useEffect(() => {
+    if (configured) {
+      void hermesStore.loadHistory();
+    }
+  }, [configured]);
+
   const {chatMessages} = calculateChatMessages(
     hermesStore.messages as MessageType.Any[],
     user,
     {showUserNames: false, showDateHeaders: true},
+  );
+
+  // 列表用 inverted 渲染（数组第 0 条会落在最底部），所以这里按新→旧排，
+  // 视觉上就是「越旧越靠上、最新的在最下面」的标准聊天顺序。
+  const streamMessages = React.useMemo(
+    () => [...chatMessages].reverse(),
+    [chatMessages],
   );
 
   const handleSendPress = useCallback((message: MessageType.PartialText) => {
@@ -151,7 +166,7 @@ export const HermesChatScreen: React.FC = observer(() => {
           onInputLayout={onInputLayout}
           list={({renderListHeader}) => (
             <FlatList
-              data={chatMessages}
+              data={streamMessages}
               inverted={chatMessages.length > 0}
               keyExtractor={item => item.id}
               renderItem={renderMessage}

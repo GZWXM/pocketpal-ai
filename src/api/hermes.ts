@@ -96,6 +96,12 @@ export interface HermesStreamParams {
   maxTokens?: number;
   /** Extra body keys forwarded verbatim (server-side tuning). */
   extraBody?: Record<string, unknown>;
+  /**
+   * Stable session id sent as `X-Hermes-Session-Id`. The server loads that
+   * session's history and appends this turn to it, which is what makes
+   * `GET /api/sessions/{id}/messages` able to return the whole conversation.
+   */
+  sessionId?: string;
 }
 
 export interface HermesStreamHandlers {
@@ -468,6 +474,9 @@ export async function streamHermesChat(
   const url = hermesChatUrl(params.serverUrl);
   const headers = buildHeaders(params.apiKey);
   headers.Accept = 'text/event-stream';
+  if (params.sessionId) {
+    headers['X-Hermes-Session-Id'] = params.sessionId;
+  }
   const body = buildRequestBody(params);
   const connectTimeoutMs = resolveTimeout(
     params.connectTimeoutMs,

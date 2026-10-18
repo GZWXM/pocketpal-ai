@@ -95,6 +95,12 @@ export class HermesStore {
   model = DEFAULT_MODEL;
   /** Flat history: user `Text` rows and `AssistantTurn` rows, in order. */
   messages: HermesMessage[] = [];
+  /**
+   * Stable session id, sent as `X-Hermes-Session-Id`. The server appends every
+   * turn to this session, which is what lets `loadHistory()` pull the whole
+   * conversation back after a restart.
+   */
+  sessionId: string = `pocketpal-${uuidv4()}`;
   status: HermesStatus = 'idle';
   /** Human-readable last failure, cleared on the next send. */
   error: string | null = null;
@@ -118,7 +124,7 @@ export class HermesStore {
     // The API key never lands in AsyncStorage; only URL, model and history.
     makePersistable(this, {
       name: 'HermesStore',
-      properties: ['serverUrl', 'model', 'messages'],
+      properties: ['serverUrl', 'model', 'messages', 'sessionId'],
       storage: AsyncStorage,
     }).then(() => this.refreshApiKeyPresence());
 
@@ -302,6 +308,80 @@ export class HermesStore {
     this.status = 'idle';
   }
 
+  /**
+   * Pull the server-side transcript for this session and rebuild the local
+   * rows. The server is the source of truth (it also holds turns sent from
+   * other channels), so the local list is replaced rather than merged —
+   * otherwise a failed send leaves a ghost row that never existed remotely.
+   */
+  async loadHistory(limit = 200): Promise<void> {
+    const base = this.serverUrl.trim();
+    if (!base) {
+      return;
+    }
+    let apiKey: string | undefined;
+    try {
+      apiKey = await this.getApiKey();
+    } catch {
+      apiKey = undefined;
+    }
+    const url =
+      `${normalizeUrl(base)}/api/sessions/${encodeURIComponent(this.sessionId)}` +
+      `/messages?limit=${limit}&order=latest`;
+    try {
+      const res = await fetch(url, {
+        headers: apiKey ? {Authorization: `Bearer ${apiKey}`} : undefined,
+      });
+      if (!res.ok) {
+        return;
+      }
+      const json = (await res.json()) as {data?: unknown};
+      const rows = Array.isArray(json?.data) ? json.data : [];
+      const toMs = (row: Record<string, unknown>): number => {
+        const v = row.timestamp ?? row.created_at;
+        if (typeof v === 'number') {
+          return v < 1e12 ? v * 1000 : v;
+        }
+        const parsed = typeof v === 'string' ? Date.parse(v) : NaN;
+        return Number.isFinite(parsed) ? parsed : Date.now();
+      };
+      const next: HermesMessage[] = [];
+      for (const raw of rows) {
+        const row = raw as Record<string, unknown>;
+        const content =
+          typeof row.content === 'string' ? row.content.trim() : '';
+        if (!content) {
+          continue;
+        }
+        const id = typeof row.id === 'string' ? row.id : uuidv4();
+        if (row.role === 'user') {
+          next.push({
+            id,
+            author: user,
+            createdAt: toMs(row),
+            type: 'text',
+            text: content,
+          });
+        } else if (row.role === 'assistant') {
+          next.push({
+            id,
+            author: assistant,
+            createdAt: toMs(row),
+            type: 'assistant_turn',
+            steps: [{content}],
+          });
+        }
+      }
+      if (next.length) {
+        runInAction(() => {
+          this.messages = next;
+        });
+      }
+    } catch {
+      // Offline or server down: keep whatever is already on screen.
+    }
+  }
+
   /** Forget everything but the key: URL, model and history. */
   async reset(): Promise<void> {
     this.clearConversation();
@@ -428,6 +508,7 @@ export class HermesStore {
           apiKey,
           model: this.model,
           messages: this.toWireMessages().filter(m => m.content.trim()),
+          sessionId: this.sessionId,
           signal: controller.signal,
         },
         {
