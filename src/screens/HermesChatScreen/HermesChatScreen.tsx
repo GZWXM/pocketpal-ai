@@ -4,7 +4,6 @@ import {
   ImageBackground,
   ListRenderItemInfo,
   Platform,
-  StatusBar,
   View,
 } from 'react-native';
 import {observer} from 'mobx-react';
@@ -135,12 +134,6 @@ export const HermesChatScreen: React.FC = observer(() => {
         source={require('../../assets/images/bg-hermes.png')}
         style={{flex: 1}}
         resizeMode="cover">
-        {/* 背景是暗色，浅色系统下默认的深色状态栏图标会看不见 */}
-        <StatusBar
-          barStyle="light-content"
-          backgroundColor="transparent"
-          translucent
-        />
         <ChatScaffold
           backgroundColor="transparent"
           chatAreaBackgroundColor="transparent"
