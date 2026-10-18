@@ -31,13 +31,24 @@ export const HermesSettingsSheet: React.FC<{
   // Re-seed the form each time the sheet opens, so an abandoned edit never
   // looks saved.
   useEffect(() => {
-    if (isVisible) {
-      setServerUrl(hermesStore.serverUrl);
-      setModel(hermesStore.model);
-      // 不要清空 apiKey：key 存在 Keychain 里，清空输入框只会让人误以为
-      // 每打开一次就要重新填。留空提交时 setApiKey 根本不会被调用。
-      setTestResult(null);
+    if (!isVisible) {
+      return;
     }
+    setServerUrl(hermesStore.serverUrl);
+    setModel(hermesStore.model);
+    setTestResult(null);
+    // 把 Keychain 里已经存着的 key 回填到输入框（secureTextEntry 下显示为圆点）。
+    // 之前只清空不读回，用户看到空白就以为每开一次都要重填。
+    let cancelled = false;
+    void (async () => {
+      const stored = await hermesStore.getApiKey();
+      if (!cancelled) {
+        setApiKey(stored ?? '');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [isVisible]);
 
   const handleSave = async () => {
