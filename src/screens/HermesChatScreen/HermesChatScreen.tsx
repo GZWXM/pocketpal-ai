@@ -24,6 +24,7 @@ import {UserContext, calculateChatMessages} from '../../utils';
 import {user} from '../../utils/chat';
 import {MessageType} from '../../utils/types';
 import {hermesStore} from '../../store/HermesStore';
+import {uploadHermesFile} from '../../api/hermes';
 
 import {HermesSettingsSheet} from './HermesSettingsSheet';
 
@@ -243,6 +244,15 @@ export const HermesChatScreen: React.FC = observer(() => {
                   camera: '拍照',
                   gallery: '从相册选择',
                   file: '发送文件',
+                }}
+                uploadFile={async file => {
+                  const apiKey = await hermesStore.getApiKey();
+                  return uploadHermesFile({
+                    serverUrl: hermesStore.serverUrl,
+                    apiKey,
+                    uri: file.uri,
+                    name: file.name,
+                  });
                 }}
                 inputBackgroundColor={theme.colors.background}
                 textInputProps={{

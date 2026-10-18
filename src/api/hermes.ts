@@ -20,6 +20,7 @@
  */
 
 import type {AgentToolCall} from '../utils/types';
+import * as RNFS from '@dr.pogodin/react-native-fs';
 import {
   CONNECTION_TIMEOUT_MS,
   IDLE_TIMEOUT_MS,
@@ -291,6 +292,59 @@ function resolveTransport(
 /** Endpoint for the chat completions call, tolerating a `/v1` suffix. */
 export function hermesChatUrl(serverUrl: string): string {
   return `${normalizeUrl(serverUrl)}/v1/chat/completions`;
+}
+
+/** One file stored by the server, ready for the agent's file tools. */
+export interface HermesUploadedFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
+/**
+ * Upload a device file to the Hermes server (`POST /api/files`).
+ *
+ * React Native's fetch cannot send a readable stream, so the file is read as
+ * base64 and posted as a plain string body tagged `X-File-Encoding: base64`.
+ * The server decodes it, stores it under `~/.hermes/uploads/<date>/` and
+ * answers with the absolute path the agent can open with its file tools.
+ */
+export async function uploadHermesFile(params: {
+  serverUrl: string;
+  apiKey?: string;
+  uri: string;
+  name: string;
+}): Promise<HermesUploadedFile> {
+  const base64 = await RNFS.readFile(params.uri, 'base64');
+  const url = `${normalizeUrl(params.serverUrl)}/api/files`;
+  const headers = buildHeaders(params.apiKey);
+  headers['Content-Type'] = 'application/octet-stream';
+  headers['X-File-Encoding'] = 'base64';
+  headers['X-File-Name'] = encodeURIComponent(params.name);
+  const response = await fetch(url, {method: 'POST', headers, body: base64});
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (payload?.error?.message) {
+        detail = String(payload.error.message);
+      } else if (payload?.message) {
+        detail = String(payload.message);
+      }
+    } catch {
+      // Non-JSON error body: keep the status line.
+    }
+    throw new HermesStreamError('server', `上传失败：${detail}`, {
+      status: response.status,
+      serverMessage: detail,
+    });
+  }
+  const payload = await response.json();
+  return {
+    path: String(payload?.path ?? ''),
+    name: String(payload?.name ?? params.name),
+    size: Number(payload?.size ?? 0),
+  };
 }
 
 function buildRequestBody(params: HermesStreamParams): string {

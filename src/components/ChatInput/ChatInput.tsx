@@ -75,6 +75,16 @@ export interface ChatInputTopLevelProps {
   isVisionEnabled?: boolean;
   /** Optional overrides for the attachment menu labels (camera/gallery/file). */
   attachmentMenuLabels?: {camera?: string; gallery?: string; file?: string};
+  /**
+   * Upload a picked file to the backend and resolve with the stored path.
+   * When absent, only text files are supported (read inline into the composer).
+   */
+  uploadFile?: (file: {
+    uri: string;
+    name: string;
+    size?: number;
+    type?: string;
+  }) => Promise<{path: string; name: string; size: number}>;
   /** Whether to show the thinking toggle button */
   showThinkingToggle?: boolean;
   /** Whether thinking mode is currently enabled */
@@ -142,6 +152,9 @@ const TEXT_FILE_EXTENSIONS = [
   'yml',
 ];
 
+/** Matches the server's `POST /api/files` cap. */
+const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+
 /** Compact human size for the unsupported-binary notice. */
 function formatBytes(bytes: number): string {
   if (bytes < 1024) {
@@ -174,6 +187,7 @@ export const ChatInput = observer(
     showImageUpload = false,
     isVisionEnabled = false,
     attachmentMenuLabels,
+    uploadFile,
     defaultImages,
     onDefaultImagesChange,
     showThinkingToggle = false,
@@ -403,13 +417,37 @@ export const ChatInput = observer(
           TEXT_FILE_EXTENSIONS.includes(extension) ||
           (file.type?.startsWith('text/') ?? false);
         if (!isText) {
-          const size =
-            typeof file.size === 'number' ? `，${formatBytes(file.size)}` : '';
-          Alert.alert(
-            '暂不支持',
-            `${name}${size} 不是文本文件，暂不支持发送。\n目前支持：${TEXT_FILE_EXTENSIONS.map(
-              ext => `.${ext}`,
-            ).join(' / ')}`,
+          const size = typeof file.size === 'number' ? file.size : undefined;
+          if (!uploadFile) {
+            const sizeLabel = size ? `，${formatBytes(size)}` : '';
+            Alert.alert(
+              '暂不支持',
+              `${name}${sizeLabel} 不是文本文件，暂不支持发送。\n目前支持：${TEXT_FILE_EXTENSIONS.map(
+                ext => `.${ext}`,
+              ).join(' / ')}`,
+            );
+            return;
+          }
+          if (size && size > MAX_UPLOAD_BYTES) {
+            Alert.alert(
+              '文件太大',
+              `${name} 有 ${formatBytes(size)}，超过 ${formatBytes(
+                MAX_UPLOAD_BYTES,
+              )} 上限，请换一个更小的文件。`,
+            );
+            return;
+          }
+          const stored = await uploadFile({
+            uri: file.uri,
+            name,
+            size,
+            type: file.type ?? undefined,
+          });
+          const note = `【已上传文件：${stored.name}，${formatBytes(
+            stored.size,
+          )}，服务器路径 ${stored.path}】`;
+          setText(previous =>
+            previous.trim() ? `${previous.trimEnd()}\n\n${note}` : note,
           );
           return;
         }
