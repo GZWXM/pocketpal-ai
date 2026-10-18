@@ -1,7 +1,14 @@
 import React, {useCallback, useState} from 'react';
-import {FlatList, ListRenderItemInfo, Platform, View} from 'react-native';
+import {
+  FlatList,
+  ImageBackground,
+  ListRenderItemInfo,
+  Platform,
+  View,
+} from 'react-native';
 import {observer} from 'mobx-react';
 import {Button, IconButton, Text} from 'react-native-paper';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 
 import {ChatScaffold} from '../../components/ChatScaffold';
 import {
@@ -50,6 +57,7 @@ const renderBubble = ({
  */
 export const HermesChatScreen: React.FC = observer(() => {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const [settingsVisible, setSettingsVisible] = useState(false);
   const {onLayout: onInputLayout, size: inputSize} = useComponentSize();
   const {onLayout: onRootLayout, size: rootSize} = useComponentSize();
@@ -97,7 +105,9 @@ export const HermesChatScreen: React.FC = observer(() => {
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 4,
-        paddingVertical: 6,
+        // 顶栏避开状态栏（信号/电量那一行）
+        paddingTop: insets.top + 6,
+        paddingBottom: 6,
       }}>
       <HeaderLeft />
       <Text variant="titleMedium" style={{flex: 1}} numberOfLines={1}>
@@ -120,94 +130,105 @@ export const HermesChatScreen: React.FC = observer(() => {
 
   return (
     <UserContext.Provider value={user}>
-      <ChatScaffold
-        backgroundColor={theme.colors.background}
-        onLayout={onRootLayout}
-        header={header}
-        pendingIndicator={
-          hermesStore.status === 'connecting' ? (
-            <PendingIndicator pendingTalentNames={[]} toolCallTokenCount={0} />
-          ) : null
-        }
-        showListHeaderSpacer={chatMessages.length > 0}
-        onInputLayout={onInputLayout}
-        list={({renderListHeader}) => (
-          <FlatList
-            data={chatMessages}
-            inverted={chatMessages.length > 0}
-            keyExtractor={item => item.id}
-            renderItem={renderMessage}
-            ListHeaderComponent={renderListHeader}
-            ListEmptyComponent={
-              <View style={{padding: 32, alignItems: 'center', gap: 12}}>
-                <Text variant="titleMedium">Hermes 远程对话</Text>
-                <Text
-                  variant="bodyMedium"
-                  style={{textAlign: 'center', opacity: 0.7}}>
-                  {configured ? '发一条消息试试' : '先填服务器地址和 API Key'}
-                </Text>
-                {!configured && (
-                  <Button
-                    mode="contained"
-                    onPress={() => setSettingsVisible(true)}>
-                    打开设置
-                  </Button>
-                )}
-              </View>
-            }
-            contentContainerStyle={{
-              flexGrow: 1,
-              justifyContent: chatMessages.length ? undefined : 'center',
-            }}
-            style={{marginBottom: inputSize.height}}
-            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
-            showsVerticalScrollIndicator={false}
-          />
-        )}
-        input={
-          <>
-            {hermesStore.error ? (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 8,
-                  paddingHorizontal: 12,
-                  paddingVertical: 8,
-                  backgroundColor: theme.colors.errorContainer,
-                }}>
-                <Text
-                  variant="bodySmall"
-                  style={{flex: 1, color: theme.colors.onErrorContainer}}>
-                  {hermesStore.error}
-                </Text>
-                <Button
-                  compact
-                  mode="text"
-                  textColor={theme.colors.onErrorContainer}
-                  onPress={() => void hermesStore.retry()}>
-                  重试
-                </Button>
-              </View>
-            ) : null}
-            <ChatInput
-              modelReady
-              onSendPress={handleSendPress}
-              isStreaming={hermesStore.status === 'streaming'}
-              onStopPress={() => hermesStore.stop()}
-              isStopVisible={hermesStore.isBusy}
-              sendButtonVisibilityMode="always"
-              inputBackgroundColor={theme.colors.background}
-              textInputProps={{
-                editable: configured,
-                placeholder: configured
-                  ? '发消息给 Hermes…'
-                  : '先配置服务器地址',
+      <ImageBackground
+        source={require('../../assets/images/bg-hermes.png')}
+        style={{flex: 1}}
+        resizeMode="cover">
+        <ChatScaffold
+          backgroundColor="transparent"
+          chatAreaBackgroundColor="transparent"
+          onLayout={onRootLayout}
+          header={header}
+          pendingIndicator={
+            hermesStore.status === 'connecting' ? (
+              <PendingIndicator
+                pendingTalentNames={[]}
+                toolCallTokenCount={0}
+              />
+            ) : null
+          }
+          showListHeaderSpacer={chatMessages.length > 0}
+          onInputLayout={onInputLayout}
+          list={({renderListHeader}) => (
+            <FlatList
+              data={chatMessages}
+              inverted={chatMessages.length > 0}
+              keyExtractor={item => item.id}
+              renderItem={renderMessage}
+              ListHeaderComponent={renderListHeader}
+              ListEmptyComponent={
+                <View style={{padding: 32, alignItems: 'center', gap: 12}}>
+                  <Text variant="titleMedium">Hermes 远程对话</Text>
+                  <Text
+                    variant="bodyMedium"
+                    style={{textAlign: 'center', opacity: 0.7}}>
+                    {configured ? '发一条消息试试' : '先填服务器地址和 API Key'}
+                  </Text>
+                  {!configured && (
+                    <Button
+                      mode="contained"
+                      onPress={() => setSettingsVisible(true)}>
+                      打开设置
+                    </Button>
+                  )}
+                </View>
+              }
+              contentContainerStyle={{
+                flexGrow: 1,
+                justifyContent: chatMessages.length ? undefined : 'center',
               }}
+              style={{marginBottom: inputSize.height}}
+              keyboardDismissMode={
+                Platform.OS === 'ios' ? 'interactive' : 'none'
+              }
+              showsVerticalScrollIndicator={false}
             />
-          </>
-        }
-      />
+          )}
+          input={
+            <>
+              {hermesStore.error ? (
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                    paddingHorizontal: 12,
+                    paddingVertical: 8,
+                    backgroundColor: theme.colors.errorContainer,
+                  }}>
+                  <Text
+                    variant="bodySmall"
+                    style={{flex: 1, color: theme.colors.onErrorContainer}}>
+                    {hermesStore.error}
+                  </Text>
+                  <Button
+                    compact
+                    mode="text"
+                    textColor={theme.colors.onErrorContainer}
+                    onPress={() => void hermesStore.retry()}>
+                    重试
+                  </Button>
+                </View>
+              ) : null}
+              <ChatInput
+                modelReady
+                onSendPress={handleSendPress}
+                isStreaming={hermesStore.status === 'streaming'}
+                onStopPress={() => hermesStore.stop()}
+                isStopVisible={hermesStore.isBusy}
+                sendButtonVisibilityMode="always"
+                inputBackgroundColor={theme.colors.background}
+                textInputProps={{
+                  editable: configured,
+                  placeholder: configured
+                    ? '发消息给 Hermes…'
+                    : '先配置服务器地址',
+                }}
+              />
+            </>
+          }
+        />
+      </ImageBackground>
       <HermesSettingsSheet
         isVisible={settingsVisible}
         onDismiss={() => setSettingsVisible(false)}

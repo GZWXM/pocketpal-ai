@@ -99,6 +99,12 @@ export interface ChatScaffoldProps {
   onInputLayout?: (event: LayoutChangeEvent) => void;
   /** Background of the root view and of the input bar. */
   backgroundColor?: string;
+  /**
+   * Background of the chat area only. Pass 'transparent' when an
+   * ImageBackground wraps the scaffold (Hermes screen). Omit to keep the
+   * theme background.
+   */
+  chatAreaBackgroundColor?: string;
   style?: StyleProp<ViewStyle>;
   testID?: string;
 }
@@ -145,6 +151,7 @@ export const ChatScaffold: React.FC<ChatScaffoldProps> = ({
   onLayout,
   onInputLayout,
   backgroundColor,
+  chatAreaBackgroundColor,
   style,
   testID,
 }) => {
@@ -239,7 +246,13 @@ export const ChatScaffold: React.FC<ChatScaffoldProps> = ({
       testID={testID}>
       {header ? <View style={styles.headerWrapper}>{header}</View> : null}
 
-      <Reanimated.View style={styles.chatContainer}>
+      <Reanimated.View
+        style={[
+          styles.chatContainer,
+          chatAreaBackgroundColor !== undefined && {
+            backgroundColor: chatAreaBackgroundColor,
+          },
+        ]}>
         {children}
         {list(listContext)}
 
