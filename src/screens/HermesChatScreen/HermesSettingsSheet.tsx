@@ -34,7 +34,8 @@ export const HermesSettingsSheet: React.FC<{
     if (isVisible) {
       setServerUrl(hermesStore.serverUrl);
       setModel(hermesStore.model);
-      setApiKey('');
+      // 不要清空 apiKey：key 存在 Keychain 里，清空输入框只会让人误以为
+      // 每打开一次就要重新填。留空提交时 setApiKey 根本不会被调用。
       setTestResult(null);
     }
   }, [isVisible]);
