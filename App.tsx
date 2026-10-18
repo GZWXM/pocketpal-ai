@@ -127,6 +127,7 @@ const App = observer(() => {
                     <SwitchPoint
                       drawer={
                         <Drawer.Navigator
+                          initialRouteName={ROUTES.HERMES}
                           screenOptions={{
                             headerLeft: () => <HeaderLeft />,
                             drawerStyle: {
