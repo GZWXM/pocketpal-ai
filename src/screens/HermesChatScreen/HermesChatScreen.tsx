@@ -89,7 +89,7 @@ export const HermesChatScreen: React.FC = observer(() => {
   );
 
   const handleSendPress = useCallback((message: MessageType.PartialText) => {
-    void hermesStore.send(message.text);
+    void hermesStore.send(message.text, message.imageUris);
   }, []);
 
   const renderMessage = useCallback(
@@ -237,6 +237,13 @@ export const HermesChatScreen: React.FC = observer(() => {
                 onStopPress={() => hermesStore.stop()}
                 isStopVisible={hermesStore.isBusy}
                 sendButtonVisibilityMode="always"
+                showImageUpload
+                isVisionEnabled={true}
+                attachmentMenuLabels={{
+                  camera: '拍照',
+                  gallery: '从相册选择',
+                  file: '发送文件',
+                }}
                 inputBackgroundColor={theme.colors.background}
                 textInputProps={{
                   editable: configured,

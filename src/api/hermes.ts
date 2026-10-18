@@ -27,6 +27,7 @@ import {
   normalizeUrl,
   resolveTimeout,
 } from './http';
+import {encodeMessagesForRemote} from './openai';
 
 /** Custom event names the Hermes server streams alongside the standard ones. */
 export const HERMES_EVENT_REASONING = 'hermes.reasoning';
@@ -76,10 +77,17 @@ export interface HermesToolProgress {
   status: string;
 }
 
-/** Wire message, in OpenAI shape. Content is text-only for this backend. */
+/** One OpenAI-style content part (text or an image attachment). */
+export interface HermesContentPart {
+  type: string;
+  text?: string;
+  image_url?: {url?: string};
+}
+
+/** Wire message, in OpenAI shape. `content` is an array when the turn carries images. */
 export interface HermesWireMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  content: string | HermesContentPart[];
 }
 
 export interface HermesStreamParams {
@@ -477,7 +485,12 @@ export async function streamHermesChat(
   if (params.sessionId) {
     headers['X-Hermes-Session-Id'] = params.sessionId;
   }
-  const body = buildRequestBody(params);
+  const body = buildRequestBody({
+    ...params,
+    // A remote server cannot read the device filesystem: inline local image
+    // attachments as data: URIs before the body is serialized.
+    messages: await encodeMessagesForRemote(params.messages),
+  });
   const connectTimeoutMs = resolveTimeout(
     params.connectTimeoutMs,
     CONNECTION_TIMEOUT_MS,

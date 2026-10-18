@@ -1,22 +1,14 @@
-export const pick = jest.fn(() =>
-  Promise.resolve({
-    uri: 'dummy-uri',
-    type: 'dummy-type',
-    name: 'dummy-name',
-    size: 1234,
-  }),
-);
+const dummyFile = {
+  uri: 'dummy-uri',
+  type: 'dummy-type',
+  name: 'dummy-name',
+  size: 1234,
+};
 
-export const pickMultiple = jest.fn(() =>
-  Promise.resolve([
-    {
-      uri: 'dummy-uri',
-      type: 'dummy-type',
-      name: 'dummy-name',
-      size: 1234,
-    },
-  ]),
-);
+// `pick` resolves a non-empty array, matching the real API.
+export const pick = jest.fn(() => Promise.resolve([dummyFile]));
+
+export const pickMultiple = jest.fn(() => Promise.resolve([dummyFile]));
 
 export const pickDirectory = jest.fn(() =>
   Promise.resolve({
@@ -24,14 +16,16 @@ export const pickDirectory = jest.fn(() =>
   }),
 );
 
-export const pickSingle = jest.fn(() =>
-  Promise.resolve({
-    uri: 'dummy-uri',
-    type: 'dummy-type',
-    name: 'dummy-name',
-    size: 1234,
-  }),
-);
+export const pickSingle = jest.fn(() => Promise.resolve([dummyFile]));
+
+export const errorCodes = {
+  OPERATION_CANCELED: 'OPERATION_CANCELED',
+  IN_PROGRESS: 'ASYNC_OP_IN_PROGRESS',
+  UNABLE_TO_OPEN_FILE_TYPE: 'UNABLE_TO_OPEN_FILE_TYPE',
+};
+
+export const isErrorWithCode = error =>
+  !!error && typeof error.code === 'string';
 
 export const types = {
   allFiles: 'public.all-files',
@@ -55,6 +49,8 @@ const DocumentPicker = {
   pickDirectory,
   pickSingle,
   types,
+  errorCodes,
+  isErrorWithCode,
 };
 
 export default DocumentPicker;

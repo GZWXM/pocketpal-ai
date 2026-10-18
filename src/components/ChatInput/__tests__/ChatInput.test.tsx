@@ -2,6 +2,8 @@ import {fireEvent, waitFor} from '@testing-library/react-native';
 import * as React from 'react';
 import {ScrollView, Alert} from 'react-native';
 import {launchCamera, launchImageLibrary} from 'react-native-image-picker';
+import {pick} from '@react-native-documents/picker';
+import * as RNFS from '@dr.pogodin/react-native-fs';
 import {runInAction} from 'mobx';
 
 import {user} from '../../../../jest/fixtures';
@@ -805,6 +807,48 @@ describe('input', () => {
       // Test that the component renders correctly with image library functionality
       expect(plusButton).toBeTruthy();
       expect(launchImageLibrary).toHaveBeenCalledTimes(0); // Not called until menu interaction
+    });
+
+    it('localizes the menu and reads a text file into the composer', async () => {
+      (pick as jest.Mock).mockResolvedValueOnce([
+        {
+          uri: 'file:///tmp/notes.md',
+          name: 'notes.md',
+          type: 'text/markdown',
+          size: 12,
+        },
+      ]);
+      (RNFS.readFile as jest.Mock).mockResolvedValueOnce('# 标题\n正文');
+
+      const {getByLabelText, findByText, getByDisplayValue} = render(
+        <UserContext.Provider value={user}>
+          <ChatInput
+            {...{
+              onSendPress: jest.fn(),
+              showImageUpload: true,
+              isVisionEnabled: true,
+              attachmentMenuLabels: {
+                camera: '拍照',
+                gallery: '从相册选择',
+                file: '发送文件',
+              },
+            }}
+          />
+        </UserContext.Provider>,
+      );
+
+      fireEvent.press(getByLabelText('Add image'));
+      expect(await findByText('拍照')).toBeTruthy();
+      expect(await findByText('从相册选择')).toBeTruthy();
+
+      fireEvent.press(await findByText('发送文件'));
+
+      await waitFor(() => {
+        expect(
+          getByDisplayValue('【文件：notes.md】\n# 标题\n正文'),
+        ).toBeTruthy();
+      });
+      expect(pick).toHaveBeenCalledWith({type: ['public.all-files']});
     });
 
     it('sends message with selected images', () => {

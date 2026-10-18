@@ -411,10 +411,10 @@ async function encodeImagePart(part: {
  * Encodes sequentially (outer messages and inner parts) so peak heap is one
  * base64 buffer at a time on a long or multi-image history.
  */
-async function encodeMessagesForRemote(
-  messages: OpenAIChatMessage[],
-): Promise<OpenAIChatMessage[]> {
-  const encoded: OpenAIChatMessage[] = [];
+export async function encodeMessagesForRemote<T extends OpenAIChatMessage>(
+  messages: T[],
+): Promise<T[]> {
+  const encoded: T[] = [];
   for (const message of messages) {
     if (!Array.isArray(message.content)) {
       encoded.push(message);
@@ -424,7 +424,7 @@ async function encodeMessagesForRemote(
     for (const part of message.content) {
       content.push(await encodeImagePart(part));
     }
-    encoded.push({...message, content});
+    encoded.push({...message, content} as T);
   }
   return encoded;
 }

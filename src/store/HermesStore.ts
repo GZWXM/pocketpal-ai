@@ -299,10 +299,15 @@ export class HermesStore {
 
   // --- conversation --------------------------------------------------------
 
-  /** Append the user row, open an assistant turn, and stream the answer. */
-  async send(input: string): Promise<void> {
+  /**
+   * Append the user row, open an assistant turn, and stream the answer.
+   * `imageUris` are kept on the row for rendering and only turned into
+   * base64 content parts when the history is flattened to the wire.
+   */
+  async send(input: string, imageUris?: string[]): Promise<void> {
     const text = input.trim();
-    if (!text || this.isBusy) {
+    const images = (imageUris ?? []).filter(Boolean);
+    if ((!text && images.length === 0) || this.isBusy) {
       return;
     }
     if (!this.serverUrl.trim()) {
@@ -318,6 +323,7 @@ export class HermesStore {
       createdAt: Date.now(),
       type: 'text',
       text,
+      ...(images.length > 0 ? {imageUris: images} : {}),
     });
     this.rememberOptimistic('user', text);
     await this.runNewTurn();
@@ -726,7 +732,11 @@ export class HermesStore {
       serverUrl: this.serverUrl,
       apiKey,
       model: this.model,
-      messages: this.toWireMessages().filter(m => m.content.trim()),
+      messages: this.toWireMessages().filter(message =>
+        typeof message.content === 'string'
+          ? message.content.trim().length > 0
+          : message.content.length > 0,
+      ),
       signal: controller.signal,
     };
 
@@ -840,6 +850,21 @@ export class HermesStore {
     const wire: HermesWireMessage[] = [];
     for (const message of this.messages) {
       if (message.type === 'text') {
+        if (message.imageUris && message.imageUris.length > 0) {
+          wire.push({
+            role: 'user',
+            content: [
+              ...(message.text
+                ? [{type: 'text' as const, text: message.text}]
+                : []),
+              ...message.imageUris.map(uri => ({
+                type: 'image_url',
+                image_url: {url: uri},
+              })),
+            ],
+          });
+          continue;
+        }
         wire.push({role: 'user', content: message.text});
         continue;
       }

@@ -12,6 +12,13 @@ import {
 import {launchCamera, launchImageLibrary} from 'react-native-image-picker';
 import {useCameraPermission} from 'react-native-vision-camera';
 import ReactNativeHapticFeedback from 'react-native-haptic-feedback';
+import * as RNFS from '@dr.pogodin/react-native-fs';
+import {
+  errorCodes,
+  isErrorWithCode,
+  pick,
+  types,
+} from '@react-native-documents/picker';
 
 import {observer} from 'mobx-react';
 import {IconButton, Text} from 'react-native-paper';
@@ -66,6 +73,8 @@ export interface ChatInputTopLevelProps {
   /** Whether to show the image upload button */
   showImageUpload?: boolean;
   isVisionEnabled?: boolean;
+  /** Optional overrides for the attachment menu labels (camera/gallery/file). */
+  attachmentMenuLabels?: {camera?: string; gallery?: string; file?: string};
   /** Whether to show the thinking toggle button */
   showThinkingToggle?: boolean;
   /** Whether thinking mode is currently enabled */
@@ -120,6 +129,30 @@ const hapticOptions = {
   ignoreAndroidSystemSettings: false,
 };
 
+/** Document formats read into the composer as plain text. */
+const TEXT_FILE_EXTENSIONS = [
+  'txt',
+  'md',
+  'markdown',
+  'json',
+  'csv',
+  'log',
+  'xml',
+  'yaml',
+  'yml',
+];
+
+/** Compact human size for the unsupported-binary notice. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** Bottom bar input component with a text input, attachment and
  * send buttons inside. By default hides send button when text input is empty. */
 export const ChatInput = observer(
@@ -140,6 +173,7 @@ export const ChatInput = observer(
     onPromptTextChange,
     showImageUpload = false,
     isVisionEnabled = false,
+    attachmentMenuLabels,
     defaultImages,
     onDefaultImagesChange,
     showThinkingToggle = false,
@@ -230,7 +264,8 @@ export const ChatInput = observer(
 
     const handleSend = () => {
       const trimmedValue = value.trim();
-      if (trimmedValue) {
+      // An attachment is content too: an image without a caption is sendable.
+      if (trimmedValue || selectedImages.length > 0) {
         // Check if model is loaded before sending
         if (!hasActiveModel) {
           // Trigger haptic feedback to indicate the action is blocked
@@ -349,6 +384,56 @@ export const ChatInput = observer(
       } finally {
         // Re-enable auto-release after gallery operation
         modelStore.enableAutoRelease('image-gallery');
+      }
+    };
+
+    // Handle picking a document: text formats are read into the composer, and
+    // anything else is reported as unsupported (this backend only accepts
+    // image attachments on the wire — there is no file-upload endpoint).
+    const handlePickFile = async () => {
+      setShowImageUploadMenu(false);
+      try {
+        const [file] = await pick({type: [types.allFiles]});
+        if (!file?.uri) {
+          return;
+        }
+        const name = file.name ?? '未命名文件';
+        const extension = name.toLowerCase().split('.').pop() ?? '';
+        const isText =
+          TEXT_FILE_EXTENSIONS.includes(extension) ||
+          (file.type?.startsWith('text/') ?? false);
+        if (!isText) {
+          const size =
+            typeof file.size === 'number' ? `，${formatBytes(file.size)}` : '';
+          Alert.alert(
+            '暂不支持',
+            `${name}${size} 不是文本文件，暂不支持发送。\n目前支持：${TEXT_FILE_EXTENSIONS.map(
+              ext => `.${ext}`,
+            ).join(' / ')}`,
+          );
+          return;
+        }
+        if (typeof file.size === 'number' && file.size > 1024 * 1024) {
+          Alert.alert(
+            '文件太大',
+            `${name} 有 ${formatBytes(file.size)}，超过 1 MB，暂不支持读取。`,
+          );
+          return;
+        }
+        const content = await RNFS.readFile(file.uri, 'utf8');
+        const block = `【文件：${name}】\n${content}`;
+        setText(previous =>
+          previous.trim() ? `${previous.trimEnd()}\n\n${block}` : block,
+        );
+      } catch (error) {
+        if (
+          isErrorWithCode(error) &&
+          error.code === errorCodes.OPERATION_CANCELED
+        ) {
+          return;
+        }
+        console.error('Error reading picked file:', error);
+        Alert.alert('读取失败', '无法读取所选文件，请换一个文件重试。');
       }
     };
 
@@ -530,14 +615,27 @@ export const ChatInput = observer(
                     </TouchableOpacity>
                   }>
                   <Menu.Item
-                    label={l10n.camera?.takePhoto || 'Camera'}
+                    label={
+                      attachmentMenuLabels?.camera ??
+                      l10n.camera?.takePhoto ??
+                      'Camera'
+                    }
                     icon="camera"
                     onPress={handleTakePhoto}
                   />
                   <Menu.Item
-                    label={l10n.common?.gallery || 'Gallery'}
+                    label={
+                      attachmentMenuLabels?.gallery ??
+                      l10n.common?.gallery ??
+                      'Gallery'
+                    }
                     icon="image"
                     onPress={handleSelectImages}
+                  />
+                  <Menu.Item
+                    label={attachmentMenuLabels?.file ?? 'File'}
+                    icon="file-document-outline"
+                    onPress={handlePickFile}
                   />
                 </Menu>
               )}
